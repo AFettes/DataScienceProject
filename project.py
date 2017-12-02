@@ -7,7 +7,6 @@ from os.path import isfile, join
 import cv2
 import imageio
 from sklearn.model_selection import train_test_split
-from sklearn.decomposition import PCA
 from sklearn.pipeline import make_pipeline
 from sklearn.svm import SVC
 from sklearn.preprocessing import StandardScaler
@@ -18,7 +17,7 @@ from sklearn.neural_network import MLPClassifier
 def main():
    imagesDir = 'katkam-scaled'
    weatherDataDir = 'yvr-weather'
-   # Used this stackoverflow to get all the names of files in directory
+   # Used this stackoverflow hint to get all the names of files in directory
    #https://stackoverflow.com/questions/33369832/read-multiple-images-on-a-folder-in-opencv-python
    imageFileNames = [ f for f in listdir(imagesDir) if isfile(join(imagesDir,f)) ]
    weatherDataFileNames = [ f for f in listdir(weatherDataDir) if isfile(join(weatherDataDir,f)) ]
@@ -95,7 +94,7 @@ def main():
    # Now we do some additional data wrangling to best do our training and testing
    
    # Many pictures were taken at night when it was very dark, those pictures are just all black and pollute the data, so get rid of them
-   weatherDataReady = weatherDataCleaned[weatherDataCleaned['Brightness'] > 6000000]
+   weatherDataReady = weatherDataCleaned[weatherDataCleaned['Brightness'] > 10000000]
    
    # Many groups were very similar, or just had a few entries, so I decided to just try and tell the difference between 4 categories: Precipitating, Clear, Cloudy, and Mostly Clear
    # Stuff like snow had such a tiny amount of training data, it was just being ingnored entirely for the tests (every snow scene was being classified as something else)
@@ -110,24 +109,59 @@ def main():
    weatherDataGrouped = weatherDataReady
    
    # Group the weather data based on previously defined groups
+   pd.options.mode.chained_assignment = None
    weatherDataGrouped.loc[weatherDataGrouped['Weather'].isin(groupPrecipitating), 'Weather'] = 'Precipitating'
    weatherDataGrouped.loc[weatherDataGrouped['Weather'].isin(groupCloudy), 'Weather'] = 'Cloudy'
    
    # These are the parameters of the images we are doing our guessing with
    parameters = weatherDataGrouped[['Blueness', 'Redness', 'Greeness', 'Brightness', 'Gradient']].values
    
+   # Change shape of names so the errors stop
+   names = np.ravel(weatherDataGrouped[['Weather']].values)
+   
    # Split into training and testing data
-   images_train, images_test, names_train, names_test = train_test_split(parameters, weatherDataGrouped[['Weather']].values)
+   images_train, images_test, names_train, names_test = train_test_split(parameters, names)
+   
+   print("Total number of images used is " + str(weatherDataGrouped.count()[0]))
    
    # Scaling is important with the color values especially, since although they range from 0-1, they tend to cluster between 25-40%
-   # SCV performed the best of common ML techniques, KNN was next best at 2-3% worse
-   # My intuition says that neural networks could do better, but would require a lot of work (just using default parameters gave a poor accuracy compared to SVC)
-   myModel = make_pipeline(
+   # SCV performed the best of common ML techniques at the start of the project, but after tuning and data cleaning,
+   # the neural network tended to do better by a couple percent points
+   myModel1 = make_pipeline(
       StandardScaler(),
       SVC(C=2))
-   myModel.fit(images_train, names_train)
-   print('Score is: ')
-   print(myModel.score(images_test, names_test))
+   myModel1.fit(images_train, names_train)
+   
+   print('Score for SVM is: ')
+   print(myModel1.score(images_test, names_test))
+   
+   countWeather = weatherDataGrouped.groupby('Weather')
+   weatherList = countWeather.agg('count')
+   priors = [weatherList.iloc[0][0], weatherList.iloc[1][0], weatherList.iloc[2][0], weatherList.iloc[3][0]]/weatherList.sum()[0]
+   myModel2 = make_pipeline(
+      StandardScaler(),
+      GaussianNB(priors=priors))
+   myModel2.fit(images_train, names_train)
+   
+   print('Score for GaussianNB is: ')
+   print(myModel2.score(images_test, names_test))
+   
+   myModel3 = make_pipeline(
+      StandardScaler(),
+      KNeighborsClassifier(n_neighbors=10))
+   myModel3.fit(images_train, names_train)
+   
+   print('Score for KNN is: ')
+   print(myModel3.score(images_test, names_test))
+   
+   myModel4 = make_pipeline(
+      StandardScaler(),
+      MLPClassifier(solver='lbfgs', hidden_layer_sizes=(4, 3),
+                      activation='logistic'))
+   myModel4.fit(images_train, names_train)
+   
+   print('Score for Neural Networks is: ')
+   print(myModel4.score(images_test, names_test))
    
    
 if __name__ == '__main__':
